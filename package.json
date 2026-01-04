@@ -9,7 +9,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@noble/curves": "^2.0.1",
+    "@noble/hashes": "^2.0.1",
     "@scure/bip32": "^2.0.1",
+    "@scure/bip39": "^2.0.1",
     "@scure/btc-signer": "^2.0.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.23.26",
