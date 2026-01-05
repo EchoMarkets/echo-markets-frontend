@@ -16,6 +16,40 @@ import type {
 import { sha256 } from "./utils";
 
 // =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+/**
+ * Convert hex string to byte array for standard serde serialization
+ * Used for public_inputs (MarketOperation fields without serde_bytes)
+ */
+function hexToBytes(hex: string): number[] {
+  if (!hex || hex.length === 0) return [];
+  const cleanHex = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const paddedHex = cleanHex.length % 2 === 1 ? "0" + cleanHex : cleanHex;
+  const bytes: number[] = [];
+  for (let i = 0; i < paddedHex.length; i += 2) {
+    bytes.push(parseInt(paddedHex.slice(i, i + 2), 16));
+  }
+  return bytes;
+}
+
+/**
+ * Convert hex string to base64 for serde_bytes serialization
+ * Used for charms output (MarketState fields with serde_bytes)
+ */
+function hexToBase64(hex: string): string {
+  if (!hex || hex.length === 0) return "";
+  const cleanHex = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const paddedHex = cleanHex.length % 2 === 1 ? "0" + cleanHex : cleanHex;
+  const bytes = new Uint8Array(paddedHex.length / 2);
+  for (let i = 0; i < paddedHex.length; i += 2) {
+    bytes[i / 2] = parseInt(paddedHex.slice(i, i + 2), 16);
+  }
+  return btoa(String.fromCharCode(...bytes));
+}
+
+// =============================================================================
 // CONFIGURATION
 // =============================================================================
 
@@ -36,6 +70,14 @@ export class SpellBuilder {
   constructor(marketId: string, appVk: string = APP_VK) {
     this.marketId = marketId;
     this.appVk = appVk;
+
+    // Warn if appVk is empty - this will cause validation errors
+    if (!this.appVk || this.appVk.trim().length === 0) {
+      console.warn(
+        "SpellBuilder: appVk is empty. This may cause prover validation errors. " +
+          "Set NEXT_PUBLIC_APP_VK environment variable or pass appVk to constructor."
+      );
+    }
   }
 
   /**
@@ -78,7 +120,7 @@ export class SpellBuilder {
       publicInputs: {
         $00: {
           Create: {
-            question_hash: params.questionHash,
+            question_hash: params.questionHash, // Plain hex string like "f61856..."
             params: {
               trading_deadline: params.tradingDeadline,
               resolution_deadline: params.resolutionDeadline,
@@ -99,8 +141,8 @@ export class SpellBuilder {
           address: params.outputAddress,
           charms: {
             $00: {
-              market_id: this.marketId,
-              question_hash: params.questionHash,
+              market_id: hexToBase64(this.marketId),
+              question_hash: hexToBase64(params.questionHash),
               params: {
                 trading_deadline: params.tradingDeadline,
                 resolution_deadline: params.resolutionDeadline,
@@ -113,7 +155,7 @@ export class SpellBuilder {
               no_supply: 0,
               max_supply: params.maxSupply,
               fees: 0,
-              creator: params.creatorPubkey,
+              creator: hexToBase64(params.creatorPubkey),
             },
           },
         },
@@ -168,8 +210,8 @@ export class SpellBuilder {
           utxoId: params.marketUtxoId,
           charms: {
             $00: {
-              market_id: this.marketId,
-              question_hash: currentState.questionHash,
+              market_id: hexToBase64(this.marketId),
+              question_hash: hexToBase64(currentState.questionHash),
               params: {
                 trading_deadline: currentState.tradingDeadline,
                 resolution_deadline: currentState.resolutionDeadline,
@@ -182,7 +224,7 @@ export class SpellBuilder {
               no_supply: currentState.oldNoSupply,
               max_supply: currentState.maxSupply,
               fees: currentState.oldFees,
-              creator: currentState.creatorPubkey,
+              creator: hexToBase64(currentState.creatorPubkey),
             },
           },
         },
@@ -196,8 +238,8 @@ export class SpellBuilder {
           address: params.marketAddress,
           charms: {
             $00: {
-              market_id: this.marketId,
-              question_hash: currentState.questionHash,
+              market_id: hexToBase64(this.marketId),
+              question_hash: hexToBase64(currentState.questionHash),
               params: {
                 trading_deadline: currentState.tradingDeadline,
                 resolution_deadline: currentState.resolutionDeadline,
@@ -210,7 +252,7 @@ export class SpellBuilder {
               no_supply: currentState.oldNoSupply + shares,
               max_supply: currentState.maxSupply,
               fees: currentState.oldFees + fee,
-              creator: currentState.creatorPubkey,
+              creator: hexToBase64(currentState.creatorPubkey),
             },
           },
         },
@@ -316,8 +358,8 @@ export class SpellBuilder {
             outcome: params.outcome,
             proof: {
               SignedAttestation: {
-                resolver_pubkey: params.resolverPubkey,
-                signature: params.signature,
+                resolver_pubkey: hexToBytes(params.resolverPubkey),
+                signature: hexToBytes(params.signature),
               },
             },
             current_timestamp: params.currentTimestamp,
@@ -329,8 +371,8 @@ export class SpellBuilder {
           utxoId: params.marketUtxoId,
           charms: {
             $00: {
-              market_id: this.marketId,
-              question_hash: params.currentState.questionHash,
+              market_id: hexToBase64(this.marketId),
+              question_hash: hexToBase64(params.currentState.questionHash),
               params: {
                 trading_deadline: params.currentState.tradingDeadline,
                 resolution_deadline: params.currentState.resolutionDeadline,
@@ -343,7 +385,7 @@ export class SpellBuilder {
               no_supply: params.currentState.noSupply,
               max_supply: params.currentState.maxSupply,
               fees: params.currentState.fees,
-              creator: params.currentState.creatorPubkey,
+              creator: hexToBase64(params.currentState.creatorPubkey),
             },
           },
         },
@@ -353,8 +395,8 @@ export class SpellBuilder {
           address: params.marketAddress,
           charms: {
             $00: {
-              market_id: this.marketId,
-              question_hash: params.currentState.questionHash,
+              market_id: hexToBase64(this.marketId),
+              question_hash: hexToBase64(params.currentState.questionHash),
               params: {
                 trading_deadline: params.currentState.tradingDeadline,
                 resolution_deadline: params.currentState.resolutionDeadline,
@@ -366,8 +408,8 @@ export class SpellBuilder {
                 outcome: params.outcome,
                 proof: {
                   SignedAttestation: {
-                    resolver_pubkey: params.resolverPubkey,
-                    signature: params.signature,
+                    resolver_pubkey: hexToBase64(params.resolverPubkey),
+                    signature: hexToBase64(params.signature),
                   },
                 },
                 timestamp: params.currentTimestamp,
@@ -376,7 +418,7 @@ export class SpellBuilder {
               no_supply: params.currentState.noSupply,
               max_supply: params.currentState.maxSupply,
               fees: params.currentState.fees,
-              creator: params.currentState.creatorPubkey,
+              creator: hexToBase64(params.currentState.creatorPubkey),
             },
           },
         },
