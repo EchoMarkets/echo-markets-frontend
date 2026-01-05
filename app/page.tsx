@@ -19,7 +19,7 @@ const DEMO_MARKETS: Market[] = [
   {
     id: "1",
     questionHash: "abc123",
-    question: "Will Bitcoin reach $150,000 by end of 2025?",
+    question: "Will Bitcoin reach $150,000 by end of 2026?",
     description: "BTC/USD price on major exchanges must exceed $150,000",
     params: {
       tradingDeadline: Math.floor(Date.now() / 1000) + 86400 * 30,
@@ -42,7 +42,7 @@ const DEMO_MARKETS: Market[] = [
   {
     id: "2",
     questionHash: "def456",
-    question: "Will Ethereum flip Bitcoin market cap in 2025?",
+    question: "Will Ethereum flip Bitcoin market cap in 2026?",
     description: "ETH market cap must exceed BTC market cap",
     params: {
       tradingDeadline: Math.floor(Date.now() / 1000) + 86400 * 60,
@@ -65,7 +65,7 @@ const DEMO_MARKETS: Market[] = [
   {
     id: "3",
     questionHash: "ghi789",
-    question: "Will there be a Bitcoin ETF approved in Europe by Q2 2025?",
+    question: "Will there be a Bitcoin ETF approved in Europe by Q2 2026?",
     params: {
       tradingDeadline: Math.floor(Date.now() / 1000) + 86400 * 45,
       resolutionDeadline: Math.floor(Date.now() / 1000) + 86400 * 50,
