@@ -83,6 +83,11 @@ export async function POST(request: NextRequest) {
 
     if (binaries) {
       appBinaries = binaries;
+      console.log(
+        `[${requestId}] Using provided binaries for ${
+          Object.keys(appBinaries).length
+        } app(s)`
+      );
     } else if (existsSync(APP_WASM_PATH)) {
       const wasmBytes = await readFile(APP_WASM_PATH);
       const wasmBase64 = wasmBytes.toString("base64");
@@ -90,21 +95,46 @@ export async function POST(request: NextRequest) {
       // Use configured VK or extract from spell
       if (APP_VK) {
         appBinaries[APP_VK] = wasmBase64;
+        console.log(
+          `[${requestId}] Loaded WASM for VK: ${APP_VK.slice(0, 16)}...`
+        );
       } else if (spell.apps) {
-        for (const [, app] of Object.entries(spell.apps) as [
-          string,
-          { vk?: string }
-        ][]) {
-          if (app.vk) {
-            appBinaries[app.vk] = wasmBase64;
+        // Extract VK from spell apps (format: "n/marketId/vk" or "t/tokenId/vk")
+        for (const [, appValue] of Object.entries(spell.apps)) {
+          if (typeof appValue === "string") {
+            const parts = appValue.split("/");
+            if (parts.length >= 3) {
+              const vk = parts[parts.length - 1];
+              if (vk && vk.length > 0) {
+                appBinaries[vk] = wasmBase64;
+              }
+            }
           }
         }
+        console.log(
+          `[${requestId}] Loaded WASM for ${
+            Object.keys(appBinaries).length
+          } app(s) extracted from spell`
+        );
+      } else {
+        console.warn(
+          `[${requestId}] No APP_VK configured and could not extract from spell.apps`
+        );
       }
+    } else {
+      console.warn(
+        `[${requestId}] WASM file not found at ${APP_WASM_PATH} and no binaries provided`
+      );
+    }
 
-      console.log(
-        `[${requestId}] Loaded WASM for ${
-          Object.keys(appBinaries).length
-        } app(s)`
+    // Validate that we have binaries if spell has apps
+    if (
+      spell.apps &&
+      Object.keys(spell.apps).length > 0 &&
+      Object.keys(appBinaries).length === 0
+    ) {
+      console.error(
+        `[${requestId}] Warning: Spell has apps but no binaries loaded`
       );
     }
 
@@ -113,11 +143,48 @@ export async function POST(request: NextRequest) {
     // =========================================================================
     console.log(`[${requestId}] Calling prover at ${PROVER_API}...`);
 
+    // Format prev_txs: prover expects array of objects with chain field
+    // Format: [{ bitcoin: "..." }] or [{ cardano: "..." }]
+    const formattedPrevTxs = prevTxs.map((txHex: string) => {
+      // Use lowercase chain name as key
+      return { [chain]: txHex };
+    });
+
+    // Convert spell to snake_case for Rust API
+    const formattedSpell = {
+      version: spell.version,
+      apps: spell.apps,
+      // Convert camelCase to snake_case (support both for flexibility)
+      private_inputs: spell.privateInputs || spell.private_inputs || undefined,
+      public_inputs: spell.publicInputs || spell.public_inputs || undefined,
+      ins: spell.ins?.map(
+        (input: {
+          utxoId?: string;
+          utxo_id?: string;
+          charms: Record<string, unknown>;
+        }) => ({
+          utxo_id: input.utxoId || input.utxo_id,
+          charms: input.charms,
+        })
+      ),
+      outs: spell.outs,
+    };
+
+    // Remove undefined fields (prover may reject null/undefined)
+    if (!formattedSpell.private_inputs) delete formattedSpell.private_inputs;
+    if (!formattedSpell.public_inputs) delete formattedSpell.public_inputs;
+
+    // Log full spell structure for debugging WASM errors
+    console.log(
+      `[${requestId}] Full spell structure:`,
+      JSON.stringify(formattedSpell, null, 2)
+    );
+
     // Build ProveRequest matching Charms Rust struct
     const proverRequest = {
-      spell,
+      spell: formattedSpell,
       binaries: appBinaries,
-      prev_txs: prevTxs,
+      prev_txs: formattedPrevTxs,
       funding_utxo: fundingUtxo,
       funding_utxo_value: fundingUtxoValue,
       change_address: changeAddress,
@@ -142,13 +209,56 @@ export async function POST(request: NextRequest) {
       clearTimeout(timeout);
 
       if (!proverResponse.ok) {
+        // Read response as text first (can only read body once)
         const errorText = await proverResponse.text();
-        console.error(`[${requestId}] Prover error:`, errorText);
+        let errorDetails: string = errorText;
+
+        // Try to parse as JSON for better error message
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorDetails =
+            typeof errorJson === "string"
+              ? errorJson
+              : errorJson.error ||
+                errorJson.message ||
+                errorJson.details ||
+                JSON.stringify(errorJson);
+        } catch {
+          // Not JSON, use text as-is
+          errorDetails = errorText;
+        }
+
+        console.error(
+          `[${requestId}] Prover error (${proverResponse.status}):`,
+          errorDetails
+        );
+        console.error(
+          `[${requestId}] Request sent:`,
+          JSON.stringify(
+            {
+              spell: {
+                version: spell.version,
+                apps: spell.apps,
+                hasPrivateInputs: !!spell.privateInputs,
+                hasPublicInputs: !!spell.publicInputs,
+                insCount: spell.ins?.length || 0,
+                outsCount: spell.outs?.length || 0,
+              },
+              binariesCount: Object.keys(appBinaries).length,
+              prevTxsCount: prevTxs.length,
+              fundingUtxo,
+              fundingUtxoValue,
+            },
+            null,
+            2
+          )
+        );
 
         return NextResponse.json(
           {
             error: "Prover API error",
-            details: errorText,
+            details: errorDetails,
+            status: proverResponse.status,
             requestId,
           },
           { status: proverResponse.status }
