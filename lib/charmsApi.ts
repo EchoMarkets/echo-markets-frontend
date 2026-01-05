@@ -105,6 +105,17 @@ export interface TxStatusResponse {
 const API_BASE = "/api/charms";
 
 /**
+ * Get configuration from server (like APP_VK)
+ */
+export async function getConfig(): Promise<{ appVk: string }> {
+  const response = await fetch(`${API_BASE}/config`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch config");
+  }
+  return response.json();
+}
+
+/**
  * Prove a spell (generates ZK proof via Charms v8 API)
  */
 export async function proveSpell(
