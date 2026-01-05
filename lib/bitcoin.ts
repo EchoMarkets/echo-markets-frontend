@@ -283,9 +283,7 @@ export async function findAddressIndexByScript(
       return i;
     }
   }
-  throw new Error(
-    `Could not find address index for script: ${targetScriptHex}`
-  );
+  return -1;
 }
 
 /**
@@ -479,13 +477,10 @@ export async function signCommitTx(
   const utxoValue = getUtxoValueFromTxHex(miningTxHex, inputVout);
   const outputScript = getOutputScriptFromTxHex(miningTxHex, inputVout);
 
-  // Find the address index by matching the script
-  const addressIndex = await findAddressIndexByScript(
-    seedPhrase,
-    outputScript,
-    100,
-    isTestnet
-  );
+  // Funding UTXO is always from main wallet address (index 0)
+  // The commit_tx input is always from the user's funding UTXO (main wallet address at index 0)
+  // The output goes to a prover-controlled address we don't need to sign
+  const addressIndex = 0;
   const keys = await generateTaprootKeysForIndex(
     seedPhrase,
     addressIndex,
@@ -534,107 +529,93 @@ export async function signCommitTx(
  * - Last input is pre-signed by prover - preserve its witness
  */
 export async function signSpellTx(
-  spellTxHex: string,
+  unsignedTxHex: string,
   signedCommitTxHex: string,
-  miningTxHex: string,
-  seedPhrase: string,
+  mnemonic: string,
   isTestnet: boolean = true
 ): Promise<{ signedHex: string; txid: string }> {
-  // Parse transactions
-  const spellTx = btc.Transaction.fromRaw(hexToBytes(spellTxHex), {
+  // Parse commit tx to get output info
+  const commitTx = btc.Transaction.fromRaw(hexToBytes(signedCommitTxHex), {
+    allowUnknownOutputs: true,
+    allowUnknownInputs: true,
+  });
+  const commitTxid = commitTx.id;
+  const commitOutput = commitTx.getOutput(0);
+
+  if (
+    !commitOutput ||
+    !commitOutput.script ||
+    commitOutput.amount === undefined
+  ) {
+    throw new Error("Invalid commit tx output");
+  }
+
+  // Parse the unsigned spell tx just to read its structure
+  const unsignedTx = btc.Transaction.fromRaw(hexToBytes(unsignedTxHex), {
     allowUnknownOutputs: true,
     allowUnknownInputs: true,
   });
 
-  const commitTx = btc.Transaction.fromRaw(hexToBytes(signedCommitTxHex));
-  const commitTxId = commitTx.id;
+  // Derive signing key
+  const seed = await bip39.mnemonicToSeed(mnemonic);
+  const hdKey = HDKey.fromMasterSeed(seed);
+  const path = isTestnet ? "m/86'/1'/0'/0/0" : "m/86'/0'/0'/0/0";
+  const child = hdKey.derive(path);
+  const privateKey = child.privateKey;
 
-  const miningTx = btc.Transaction.fromRaw(hexToBytes(miningTxHex));
+  if (!privateKey) {
+    throw new Error("Failed to derive private key");
+  }
 
-  // Build signed transaction
-  const signedTx = new btc.Transaction({ allowUnknownOutputs: true });
+  const pubkey = secp256k1.getPublicKey(privateKey, true);
+  const schnorrPubkey = pubkey.slice(1);
 
-  const inputCount = spellTx.inputsLength;
-  const inputsToSign: number[] = [];
-  const inputKeys: Map<number, TaprootKeys> = new Map();
+  // Build fresh transaction
+  const tx = new btc.Transaction({
+    allowUnknownOutputs: true,
+    allowUnknownInputs: true,
+  });
 
-  // Process each input
-  for (let i = 0; i < inputCount; i++) {
-    const input = spellTx.getInput(i);
-    if (!input.txid) throw new Error(`Input ${i} missing txid`);
+  // Add input that spends commit_tx output (our input to sign)
+  tx.addInput({
+    txid: commitTxid,
+    index: 0,
+    witnessUtxo: {
+      script: commitOutput.script,
+      amount: commitOutput.amount,
+    },
+    tapInternalKey: schnorrPubkey,
+  });
 
-    const inputTxid = bytesToHex(input.txid);
-    const inputVout = input.index!;
-
-    if (inputTxid === commitTxId) {
-      // This is the commit output - already signed by prover
-      // Preserve the existing witness
-      const commitOutput = commitTx.getOutput(inputVout);
-
-      signedTx.addInput({
-        txid: input.txid,
-        index: inputVout,
-        sequence: input.sequence,
-        finalScriptWitness: input.finalScriptWitness,
-        witnessUtxo: {
-          script: commitOutput.script!,
-          amount: commitOutput.amount!,
-        },
+  // Copy ALL outputs from unsigned tx using raw scripts
+  for (let i = 0; i < unsignedTx.outputsLength; i++) {
+    const output = unsignedTx.getOutput(i);
+    if (output.script && output.amount !== undefined) {
+      tx.addOutput({
+        script: output.script,
+        amount: output.amount,
       });
-    } else {
-      // This is a mining UTXO - we need to sign it
-      const miningOutput = miningTx.getOutput(inputVout);
-      const outputScript = bytesToHex(miningOutput.script!);
-
-      // Find the address index
-      const addressIndex = await findAddressIndexByScript(
-        seedPhrase,
-        outputScript,
-        100,
-        isTestnet
-      );
-      const keys = await generateTaprootKeysForIndex(
-        seedPhrase,
-        addressIndex,
-        isTestnet
-      );
-
-      signedTx.addInput({
-        txid: input.txid,
-        index: inputVout,
-        witnessUtxo: {
-          script: miningOutput.script!,
-          amount: miningOutput.amount!,
-        },
-        tapInternalKey: keys.internalPubkey,
-        sequence: input.sequence,
-      });
-
-      inputsToSign.push(i);
-      inputKeys.set(i, keys);
     }
   }
 
-  // Copy outputs
-  for (let i = 0; i < spellTx.outputsLength; i++) {
-    const output = spellTx.getOutput(i);
-    signedTx.addOutput({
-      script: output.script!,
-      amount: output.amount!,
-    });
+  // Debug: log amounts
+  console.log("Commit output amount:", commitOutput.amount);
+  let totalOut = BigInt(0);
+  for (let i = 0; i < tx.outputsLength; i++) {
+    const out = tx.getOutput(i);
+    console.log(`Output ${i}: ${out.amount}`);
+    totalOut += out.amount || BigInt(0);
   }
+  console.log("Total outputs:", totalOut);
 
-  // Sign our inputs (not the commit output)
-  for (const idx of inputsToSign) {
-    const keys = inputKeys.get(idx)!;
-    signedTx.signIdx(keys.tweakedPrivateKey, idx);
-    signedTx.finalizeIdx(idx);
-  }
+  // Sign and finalize
+  tx.signIdx(privateKey, 0);
+  tx.finalize();
 
-  const signedHex = bytesToHex(signedTx.extract());
-  const txid = signedTx.id;
-
-  return { signedHex, txid };
+  return {
+    signedHex: bytesToHex(tx.toBytes()),
+    txid: tx.id,
+  };
 }
 
 /**
@@ -664,7 +645,6 @@ export async function signProverTransactions(
   const spell = await signSpellTx(
     spellTxHex,
     commit.signedHex,
-    miningTxHex,
     seedPhrase,
     isTestnet
   );
