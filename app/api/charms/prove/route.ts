@@ -115,11 +115,42 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Format prev_txs: prover expects array of objects with chain field
+    // Format: [{ bitcoin: "..." }] or [{ cardano: "..." }]
+    const formattedPrevTxs = prevTxs.map((txHex: string) => {
+      // Use lowercase chain name as key
+      return { [chain]: txHex };
+    });
+
+    // Convert spell to snake_case for Rust API
+    const formattedSpell = {
+      version: spell.version,
+      apps: spell.apps,
+      // Convert camelCase to snake_case (support both for flexibility)
+      private_inputs: spell.privateInputs || spell.private_inputs || undefined,
+      public_inputs: spell.publicInputs || spell.public_inputs || undefined,
+      ins: spell.ins?.map(
+        (input: {
+          utxoId?: string;
+          utxo_id?: string;
+          charms: Record<string, unknown>;
+        }) => ({
+          utxo_id: input.utxoId || input.utxo_id,
+          charms: input.charms,
+        })
+      ),
+      outs: spell.outs,
+    };
+
+    // Remove undefined fields (prover may reject null/undefined)
+    if (!formattedSpell.private_inputs) delete formattedSpell.private_inputs;
+    if (!formattedSpell.public_inputs) delete formattedSpell.public_inputs;
+
     // Build ProveRequest matching Charms Rust struct
     const proverRequest = {
-      spell, // Spell object (not stringified!)
+      spell: formattedSpell, // Spell object with snake_case fields
       binaries: appBinaries, // { vk: base64_wasm }
-      prev_txs: prevTxs, // Array of tx hexes
+      prev_txs: formattedPrevTxs, // Array of { bitcoin: "hex" } or { cardano: "hex" }
       funding_utxo: fundingUtxo, // "txid:vout"
       funding_utxo_value: fundingUtxoValue, // u64 sats
       change_address: changeAddress, // Bitcoin address
