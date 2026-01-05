@@ -166,6 +166,12 @@ export function useCharms(): UseCharmsReturn {
     // Blacklist UTXOs that prover rejected
     const blacklist = [
       "a56180e74364ce3368a86ed25d54efda85fa24300d051b27ecff46d8f3203c2e:1",
+      "a1e8ad6e6fd7ca581f39c790a4d182714577a3f6b4f3af0f383308fa197d44da:1",
+      "cfa1b7bb80a76f4979eee659bf687d143f618c5e007e24b1b413cef17835f1bf:0",
+      "925a7bca001257dc930e989821e9a301c103dbb61ab52f4c65616c08cd90d0c2:0",
+      "5f1f00785db4e2ec6f49d07085f87f5df308541e12f50ee5dfd928f01b92a307:1",
+
+      // Add this
     ];
 
     const available = utxos.filter(
@@ -266,7 +272,8 @@ export function useCharms(): UseCharmsReturn {
       // Broadcast both transactions
       const broadcastResult = await broadcastTxPackage(
         signedCommitTx,
-        signedSpellTx
+        signedSpellTx,
+        fundingUtxo
       );
 
       setProcessing(false);
@@ -375,6 +382,7 @@ export function useCharms(): UseCharmsReturn {
         console.log("Got unsigned transactions from prover, signing...");
 
         // Step 2 & 3: Sign and broadcast
+        // Note: Logging and classification happen in broadcastTxPackage (single source of truth)
         const { commitTxid, spellTxid } = await signAndBroadcast(
           proverResult.commit_tx,
           proverResult.spell_tx,
