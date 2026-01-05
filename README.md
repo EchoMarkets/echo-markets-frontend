@@ -8,6 +8,13 @@ A decentralized prediction market platform built on Bitcoin Testnet4, powered by
 
 ---
 
+## 📦 Repositories
+
+| Repo                                                                          | Description                   |
+| ----------------------------------------------------------------------------- | ----------------------------- |
+| [echo-markets](https://github.com/EchoMarkets/echo-markets)                   | Charms smart contracts (Rust) |
+| [echo-markets-frontend](https://github.com/EchoMarkets/echo-markets-frontend) | Web application (this repo)   |
+
 ## 🎯 Features
 
 ### Core Functionality
