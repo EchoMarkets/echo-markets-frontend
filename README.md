@@ -28,7 +28,7 @@ A decentralized prediction market platform built on Bitcoin Testnet4, powered by
 
 ### Technical Highlights
 
-- **Zero-Knowledge Proofs** — Private, verifiable transactions via Charms v8
+- **Zero-Knowledge Proofs** — Private, verifiable transactions via Charms
 - **Bitcoin Native** — Built on Bitcoin Testnet4, no sidechains
 - **Taproot Wallets** — BIP86 derivation with Schnorr signatures
 - **Transaction Polling** — Automatic confirmation tracking
@@ -260,12 +260,6 @@ await trade({
 | Charms spells (create, mint, burn, trade, resolve, redeem) | ✅     |
 | API routes (prove, cast, broadcast)                        | ✅     |
 
-### ⏸️ Pending
-
-| Item                   | Notes                         |
-| ---------------------- | ----------------------------- |
-| Contract WASM + APP_VK | Need to add compiled contract |
-
 ### 🔮 Future Improvements
 
 - Retry logic for failed broadcasts
@@ -276,17 +270,15 @@ await trade({
 - Cancel market functionality
 - Order book for P2P matching
 - On-chain market indexing
-- WalletConnect integration
 
 ---
 
 ## ⚠️ Known Limitations
 
-1. **Testnet Only** — This is testnet software, not production-ready
+1. **Testnet Only** — This is a testnet prediction market
 2. **No Order Book** — P2P trades require knowing counterparty's UTXO
-3. **Client-Side Positions** — Positions tracked from app transactions, not blockchain-scanned
-4. **Single Address** — Uses primary address only (24-address system exists but unused)
-5. **Hardcoded Fees** — Uses 2 sat/vB, no dynamic estimation
+3. **Single Address** — Uses primary address only (24-address system exists but unused)
+4. **Hardcoded Fees** — Uses 2 sat/vB, no dynamic estimation
 
 ---
 
@@ -335,10 +327,9 @@ Set in your deployment platform:
 
 ## 🙏 Acknowledgments
 
-- **Charms Protocol** — Bitcoin smart contracts with ZK proofs
-- **BitcoinOS** — Bitcoin application layer
-- **Encode Club** — Hackathon organizers
-- **Mempool.space** — Bitcoin blockchain API
+- [**Charms Protocol**](https://charms.dev/) — Bitcoin smart contracts with ZK proofs
+- [**BitcoinOS**](https://bitcoinos.build/) — Bitcoin application layer
+- [**Encode Club**](https://www.encodeclub.com) — a global developer education community focused on Web3 and AI
 
 ---
 
