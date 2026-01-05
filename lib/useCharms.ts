@@ -29,6 +29,7 @@ import { SpellBuilder, createMarketId, createQuestionHash } from "./charms";
 import {
   castSpell,
   getExplorerUrl,
+  getConfig,
   //broadcastTx,
   type CastResponse,
 } from "./charmsApi";
@@ -162,8 +163,21 @@ export function useCharms(): UseCharmsReturn {
       throw new Error("No UTXOs available. Please fund your wallet first.");
     }
 
+    // Blacklist UTXOs that prover rejected
+    const blacklist = [
+      "a56180e74364ce3368a86ed25d54efda85fa24300d051b27ecff46d8f3203c2e:1",
+    ];
+
+    const available = utxos.filter(
+      (u) => !blacklist.includes(`${u.txid}:${u.vout}`)
+    );
+
+    if (available.length === 0) {
+      throw new Error("No available UTXOs. All were previously used.");
+    }
+
     // Sort: prefer confirmed, then by value descending
-    const sorted = [...utxos].sort((a, b) => {
+    const sorted = [...available].sort((a, b) => {
       if (a.status.confirmed && !b.status.confirmed) return -1;
       if (!a.status.confirmed && b.status.confirmed) return 1;
       return b.value - a.value;
@@ -204,10 +218,23 @@ export function useCharms(): UseCharmsReturn {
    */
   const signAndBroadcast = useCallback(
     async (
-      commitTxHex: string,
-      spellTxHex: string,
+      commitTxHex: string | { bitcoin?: string; hex?: string },
+      spellTxHex: string | { bitcoin?: string; hex?: string },
       fundingUtxo: MempoolUTXO
     ): Promise<{ commitTxid: string; spellTxid: string }> => {
+      // Extract hex string if object
+      const commitHex =
+        typeof commitTxHex === "string"
+          ? commitTxHex
+          : commitTxHex.bitcoin || commitTxHex.hex || "";
+      const spellHex =
+        typeof spellTxHex === "string"
+          ? spellTxHex
+          : spellTxHex.bitcoin || spellTxHex.hex || "";
+
+      if (!commitHex || !spellHex) {
+        throw new Error("Invalid transaction format from prover");
+      }
       if (!mnemonic) {
         throw new Error(
           "Wallet mnemonic not available. Please reconnect wallet."
@@ -227,8 +254,8 @@ export function useCharms(): UseCharmsReturn {
       // Sign both transactions using Taproot/Schnorr
       const { signedCommitTx, signedSpellTx /*commitTxid, spellTxid*/ } =
         await signProverTransactions(
-          commitTxHex,
-          spellTxHex,
+          commitHex,
+          spellHex,
           miningTxHex,
           mnemonic,
           true // isTestnet
@@ -282,8 +309,19 @@ export function useCharms(): UseCharmsReturn {
 
         setProcessing(true, "Building spell...");
 
+        // Get APP_VK from server if not available on client
+        let appVk = process.env.NEXT_PUBLIC_APP_VK || "";
+        if (!appVk) {
+          try {
+            const config = await getConfig();
+            appVk = config.appVk;
+          } catch (err) {
+            console.warn("Failed to fetch APP_VK from server:", err);
+          }
+        }
+
         // Build spell
-        const builder = new SpellBuilder(marketId);
+        const builder = new SpellBuilder(marketId, appVk);
         const spell = builder.buildCreateSpell({
           fundingUtxo: fundingUtxoId,
           questionHash,
@@ -296,7 +334,19 @@ export function useCharms(): UseCharmsReturn {
           outputAddress: wallet.address,
         });
 
-        console.log("Casting create market spell...", spell);
+        console.log("Casting create market spell...", {
+          spell: {
+            version: spell.version,
+            apps: spell.apps,
+            hasPrivateInputs: !!spell.privateInputs,
+            hasPublicInputs: !!spell.publicInputs,
+            insCount: spell.ins?.length || 0,
+            outsCount: spell.outs?.length || 0,
+          },
+          fundingUtxo: fundingUtxoId,
+          fundingUtxoValue: fundingUtxo.value,
+          prevTxsCount: prevTxs.length,
+        });
 
         setProcessing(true, "Requesting proof from prover...");
 
@@ -393,8 +443,22 @@ export function useCharms(): UseCharmsReturn {
         // Return the market ID (sliced to 16 chars as used in the market object)
         return marketId.slice(0, 16);
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Failed to create market";
+        let message = "Failed to create market";
+
+        if (err instanceof Error) {
+          message = err.message;
+          // Check if it's a CharmsApiError with details
+          if ("data" in err && err.data && typeof err.data === "object") {
+            const data = err.data as { details?: string; error?: string };
+            if (data.details) {
+              message = `${message}: ${data.details}`;
+            } else if (data.error) {
+              message = `${message}: ${data.error}`;
+            }
+          }
+        }
+
+        console.error("Create market error:", err);
         setError(message);
         addToast({ type: "error", title: "Error", message });
         throw err;
