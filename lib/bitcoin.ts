@@ -380,7 +380,10 @@ export async function fetchTxHex(txid: string): Promise<string> {
  * Get UTXO value from transaction hex
  */
 export function getUtxoValueFromTxHex(txHex: string, vout: number): number {
-  const tx = btc.Transaction.fromRaw(hexToBytes(txHex));
+  const tx = btc.Transaction.fromRaw(hexToBytes(txHex), {
+    allowUnknownOutputs: true,
+    allowUnknownInputs: true,
+  });
   const output = tx.getOutput(vout);
   if (!output || output.amount === undefined) {
     throw new Error(`Output ${vout} not found in transaction`);
@@ -392,7 +395,13 @@ export function getUtxoValueFromTxHex(txHex: string, vout: number): number {
  * Get output script from transaction hex
  */
 export function getOutputScriptFromTxHex(txHex: string, vout: number): string {
-  const tx = btc.Transaction.fromRaw(hexToBytes(txHex));
+  const tx = btc.Transaction.fromRaw(hexToBytes(txHex), {
+    allowUnknownOutputs: true,
+    allowUnknownInputs: true,
+    // optional but often helps with “weird” scripts produced by tools
+    disableScriptCheck: true,
+  });
+
   const output = tx.getOutput(vout);
   if (!output || !output.script) {
     throw new Error(`Output ${vout} not found in transaction`);
@@ -534,7 +543,7 @@ export async function signSpellTx(
   mnemonic: string,
   isTestnet: boolean = true
 ): Promise<{ signedHex: string; txid: string }> {
-  // Parse commit tx to get output info
+  // Parse commit tx
   const commitTx = btc.Transaction.fromRaw(hexToBytes(signedCommitTxHex), {
     allowUnknownOutputs: true,
     allowUnknownInputs: true,
@@ -550,7 +559,7 @@ export async function signSpellTx(
     throw new Error("Invalid commit tx output");
   }
 
-  // Parse the unsigned spell tx just to read its structure
+  // Parse the unsigned spell tx
   const unsignedTx = btc.Transaction.fromRaw(hexToBytes(unsignedTxHex), {
     allowUnknownOutputs: true,
     allowUnknownInputs: true,
@@ -560,8 +569,7 @@ export async function signSpellTx(
   const seed = await bip39.mnemonicToSeed(mnemonic);
   const hdKey = HDKey.fromMasterSeed(seed);
   const path = isTestnet ? "m/86'/1'/0'/0/0" : "m/86'/0'/0'/0/0";
-  const child = hdKey.derive(path);
-  const privateKey = child.privateKey;
+  const privateKey = hdKey.derive(path).privateKey;
 
   if (!privateKey) {
     throw new Error("Failed to derive private key");
@@ -570,13 +578,13 @@ export async function signSpellTx(
   const pubkey = secp256k1.getPublicKey(privateKey, true);
   const schnorrPubkey = pubkey.slice(1);
 
-  // Build fresh transaction
+  // Build spell tx with ONLY the commit_tx output as input
   const tx = new btc.Transaction({
     allowUnknownOutputs: true,
     allowUnknownInputs: true,
   });
 
-  // Add input that spends commit_tx output (our input to sign)
+  // Add ONLY the input that spends commit_tx output
   tx.addInput({
     txid: commitTxid,
     index: 0,
@@ -587,7 +595,7 @@ export async function signSpellTx(
     tapInternalKey: schnorrPubkey,
   });
 
-  // Copy ALL outputs from unsigned tx using raw scripts
+  // Copy ALL outputs from the prover's spell tx
   for (let i = 0; i < unsignedTx.outputsLength; i++) {
     const output = unsignedTx.getOutput(i);
     if (output.script && output.amount !== undefined) {
@@ -598,19 +606,11 @@ export async function signSpellTx(
     }
   }
 
-  // Debug: log amounts
-  console.log("Commit output amount:", commitOutput.amount);
-  let totalOut = BigInt(0);
-  for (let i = 0; i < tx.outputsLength; i++) {
-    const out = tx.getOutput(i);
-    console.log(`Output ${i}: ${out.amount}`);
-    totalOut += out.amount || BigInt(0);
-  }
-  console.log("Total outputs:", totalOut);
-
   // Sign and finalize
-  tx.signIdx(privateKey, 0);
+  tx.sign(privateKey);
   tx.finalize();
+
+  console.log("Spell tx signed, txid:", tx.id);
 
   return {
     signedHex: bytesToHex(tx.toBytes()),
@@ -641,13 +641,15 @@ export async function signProverTransactions(
     isTestnet
   );
 
-  // Sign spell transaction
-  const spell = await signSpellTx(
-    spellTxHex,
-    commit.signedHex,
-    seedPhrase,
-    isTestnet
-  );
+  // IMPORTANT: spellTxHex already contains the prover witness/proof.
+  // Do not rebuild it or you’ll drop the witness and finalize() will fail.
+  const spell = {
+    signedHex: spellTxHex,
+    txid: btc.Transaction.fromRaw(hexToBytes(spellTxHex), {
+      allowUnknownOutputs: true,
+      allowUnknownInputs: true,
+    }).id,
+  };
 
   return {
     signedCommitTx: commit.signedHex,
@@ -660,6 +662,146 @@ export async function signProverTransactions(
 // =============================================================================
 // BROADCAST
 // =============================================================================
+
+/**
+ * Parse transaction and return id and inputs as "txid:vout" strings
+ * Accommodates differing btc-signer input shapes
+ */
+export function txInfo(txHex: string): { id: string; inputs: string[] } {
+  const tx = btc.Transaction.fromRaw(hexToBytes(txHex), {
+    allowUnknownOutputs: true,
+    allowUnknownInputs: true,
+    disableScriptCheck: true,
+  });
+
+  const inputs: string[] = [];
+
+  // Try to get inputs from different possible locations
+  // Accommodate differing btc-signer input shapes
+  const txAny = tx as unknown as {
+    inputs?: Array<{ txid?: Uint8Array; index?: number; vout?: number }>;
+    _inputs?: Array<{ txid?: Uint8Array; index?: number; vout?: number }>;
+  };
+  const inputArray = txAny.inputs ?? txAny._inputs ?? [];
+
+  if (inputArray.length > 0) {
+    // Use direct array access if available
+    for (const input of inputArray) {
+      const txid = input.txid ? bytesToHex(input.txid) : null;
+      const vout = input.index ?? input.vout ?? null;
+      if (txid && vout !== null) {
+        inputs.push(`${txid}:${vout}`);
+      }
+    }
+  } else {
+    // Fallback to using getInput method
+    for (let i = 0; i < tx.inputsLength; i++) {
+      const input = tx.getInput(i);
+      if (input.txid && input.index !== undefined) {
+        const txid = bytesToHex(input.txid);
+        inputs.push(`${txid}:${input.index}`);
+      }
+    }
+  }
+
+  return {
+    id: tx.id,
+    inputs,
+  };
+}
+
+/**
+ * Classify prover transaction package (commit vs spell)
+ * This is the single source of truth for commit/spell identification.
+ *
+ * @param txHexes - Array of 2 transaction hex strings (order doesn't matter)
+ * @param fundingUtxoId - Funding UTXO in "txid:vout" format
+ * @returns Object with commit and spell transaction info
+ * @throws Error if commit or spell cannot be identified
+ */
+function classifyProverTxs(
+  txHexes: [string, string],
+  fundingUtxoId: string
+): {
+  commitTxHex: string;
+  commitTxInfo: { id: string; inputs: string[] };
+  spellTxHex: string;
+  spellTxInfo: { id: string; inputs: string[] };
+} {
+  const [tx0Hex, tx1Hex] = txHexes;
+  const tx0Info = txInfo(tx0Hex);
+  const tx1Info = txInfo(tx1Hex);
+
+  // Check which transactions spend the funding UTXO
+  const tx0SpendsFunding = tx0Info.inputs.includes(fundingUtxoId);
+  const tx1SpendsFunding = tx1Info.inputs.includes(fundingUtxoId);
+
+  let commitTxHex: string;
+  let commitTxInfo: { id: string; inputs: string[] };
+  let spellTxHex: string;
+  let spellTxInfo: { id: string; inputs: string[] };
+
+  if (tx0SpendsFunding && !tx1SpendsFunding) {
+    // Only tx0 spends funding: tx0 is commit, tx1 is spell
+    commitTxHex = tx0Hex;
+    commitTxInfo = tx0Info;
+    spellTxHex = tx1Hex;
+    spellTxInfo = tx1Info;
+  } else if (tx1SpendsFunding && !tx0SpendsFunding) {
+    // Only tx1 spends funding: tx1 is commit, tx0 is spell
+    commitTxHex = tx1Hex;
+    commitTxInfo = tx1Info;
+    spellTxHex = tx0Hex;
+    spellTxInfo = tx0Info;
+  } else if (tx0SpendsFunding && tx1SpendsFunding) {
+    // Both spend funding: determine dependency by checking if one spends the other
+    if (tx1Info.inputs.some((input) => input.startsWith(`${tx0Info.id}:`))) {
+      // tx1 spends tx0 output: tx0 is commit, tx1 is spell
+      commitTxHex = tx0Hex;
+      commitTxInfo = tx0Info;
+      spellTxHex = tx1Hex;
+      spellTxInfo = tx1Info;
+    } else if (
+      tx0Info.inputs.some((input) => input.startsWith(`${tx1Info.id}:`))
+    ) {
+      // tx0 spends tx1 output: tx1 is commit, tx0 is spell
+      commitTxHex = tx1Hex;
+      commitTxInfo = tx1Info;
+      spellTxHex = tx0Hex;
+      spellTxInfo = tx0Info;
+    } else {
+      throw new Error(
+        "Both spend funding, but neither spends the other (cannot determine dependency)"
+      );
+    }
+  } else {
+    // Neither spends funding
+    throw new Error(
+      `Cannot determine commit tx: neither transaction spends funding UTXO ${fundingUtxoId}`
+    );
+  }
+
+  // Compute commitTxid
+  const commitTxid = commitTxInfo.id;
+
+  // Validate that spell tx spends commit output
+  const spellSpendsCommit = spellTxInfo.inputs.some((input) =>
+    input.startsWith(`${commitTxid}:`)
+  );
+
+  if (!spellSpendsCommit) {
+    throw new Error(
+      "No spell tx found: neither tx spends commit output. Refusing to broadcast conflicting tx."
+    );
+  }
+
+  return {
+    commitTxHex,
+    commitTxInfo,
+    spellTxHex,
+    spellTxInfo,
+  };
+}
 
 /**
  * Broadcast a single transaction
@@ -681,25 +823,125 @@ export async function broadcastTransaction(txHex: string): Promise<string> {
 
 /**
  * Broadcast transaction package (commit + spell atomically)
- * Note: mempool.space doesn't support package relay, so we broadcast sequentially
- * For true package relay, use a Bitcoin Core node with RPC
+ *
+ * This is the ONLY function that:
+ * - Identifies commit as spending fundingUtxoId
+ * - Identifies spell as spending ${commitTxid}:*
+ * - Enforces "spell must spend commit" (otherwise throw and don't broadcast)
+ * - Broadcasts commit first then spell (or as package if both spend funding)
+ *
+ * For Charms prover packages where both transactions spend the funding UTXO,
+ * uses Bitcoin Core submitpackage for atomic package relay.
  */
 export async function broadcastTxPackage(
-  signedCommitTxHex: string,
-  signedSpellTxHex: string
+  tx1Hex: string,
+  tx2Hex: string,
+  fundingUtxo: MempoolUTXO
 ): Promise<{ commitTxid: string; spellTxid: string }> {
-  // Broadcast commit first
-  const commitTxid = await broadcastTransaction(signedCommitTxHex);
-  console.log("Commit tx broadcast:", commitTxid);
+  const fundingUtxoId = `${fundingUtxo.txid}:${fundingUtxo.vout}`;
 
-  // Small delay to let commit propagate
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  // Log transaction information (single source of truth for logging)
+  const tx1 = txInfo(tx1Hex);
+  const tx2 = txInfo(tx2Hex);
+  console.log(`FUNDING ${fundingUtxoId}`);
+  console.log(
+    `PROVER TX[0] { id: ${tx1.id}, inputs: [${tx1.inputs.join(", ")}] }`
+  );
+  console.log(
+    `PROVER TX[1] { id: ${tx2.id}, inputs: [${tx2.inputs.join(", ")}] }`
+  );
 
-  // Broadcast spell
-  const spellTxid = await broadcastTransaction(signedSpellTxHex);
-  console.log("Spell tx broadcast:", spellTxid);
+  // Classify transactions (single source of truth for classification)
+  const { commitTxHex, commitTxInfo, spellTxHex, spellTxInfo } =
+    classifyProverTxs([tx1Hex, tx2Hex], fundingUtxoId);
 
-  return { commitTxid, spellTxid };
+  const commitTxid = commitTxInfo.id;
+  console.log(`Identified commit tx: ${commitTxid}`);
+  console.log(`Identified spell tx: ${spellTxInfo.id} (spends commit output)`);
+
+  // Check if spell tx also spends the funding UTXO (Charms package case)
+  const spellAlsoSpendsFunding = spellTxInfo.inputs.includes(fundingUtxoId);
+
+  if (spellAlsoSpendsFunding) {
+    // Both transactions spend funding: use package broadcast
+    console.log(
+      "Detected Charms package: both transactions spend funding UTXO, using package broadcast"
+    );
+
+    try {
+      const response = await fetch("/api/bitcoin/submitpackage", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          txs: [commitTxHex, spellTxHex], // Topologically sorted: commit first, spell second
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error ||
+            `Package broadcast failed: ${response.status} ${response.statusText}`
+        );
+      }
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(
+          result.error ||
+            "Package broadcast failed: unknown error from submitpackage"
+        );
+      }
+
+      // Extract transaction IDs from package result
+      const txids = result.txids || [];
+      if (txids.length < 2) {
+        throw new Error(
+          `Package broadcast returned ${txids.length} txids, expected 2`
+        );
+      }
+
+      const broadcastedCommitTxid = txids[0];
+      const spellTxid = txids[1];
+
+      console.log("Package broadcast successful:");
+      console.log("  Commit tx:", broadcastedCommitTxid);
+      console.log("  Spell tx:", spellTxid);
+
+      return { commitTxid: broadcastedCommitTxid, spellTxid };
+    } catch (error) {
+      // Check if error is about missing RPC config
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.includes("Package relay required: configure BITCOIND_RPC")
+      ) {
+        throw new Error(
+          "Package relay required: configure BITCOIND_RPC or use a broadcaster that supports submitpackage."
+        );
+      }
+      throw error;
+    }
+  } else {
+    // Standard case: only commit spends funding, broadcast sequentially
+    console.log("Standard package: sequential broadcast");
+
+    // Broadcast commit first, then spell
+    const broadcastedCommitTxid = await broadcastTransaction(commitTxHex);
+    console.log("Commit tx broadcast:", broadcastedCommitTxid);
+
+    // Small delay to let commit propagate
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Broadcast spell
+    const spellTxid = await broadcastTransaction(spellTxHex);
+    console.log("Spell tx broadcast:", spellTxid);
+
+    return { commitTxid: broadcastedCommitTxid, spellTxid };
+  }
 }
 
 // =============================================================================
@@ -916,7 +1158,11 @@ export function parseTransaction(txHex: string): {
   inputs: Array<{ txid: string; vout: number; sequence: number }>;
   outputs: Array<{ value: number; script: string }>;
 } {
-  const tx = btc.Transaction.fromRaw(hexToBytes(txHex));
+  const tx = btc.Transaction.fromRaw(hexToBytes(txHex), {
+    allowUnknownOutputs: true,
+    allowUnknownInputs: true,
+    disableScriptCheck: true,
+  });
 
   const inputs = [];
   for (let i = 0; i < tx.inputsLength; i++) {
