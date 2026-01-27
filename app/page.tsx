@@ -8,11 +8,12 @@ import {
   useMarketsStore,
   useWalletStore,
   useFilteredMarkets,
+  usePortfolioStore,
 } from "@/lib/store";
 import { MarketCard } from "@/components/market/MarketCard";
 import { Button } from "@/components/ui/Button";
 import { formatSats } from "@/lib/utils";
-import type { Market } from "@/types";
+import type { Market, MarketPosition } from "@/types";
 
 // Demo markets for testing
 const DEMO_MARKETS: Market[] = [
@@ -86,9 +87,38 @@ const DEMO_MARKETS: Market[] = [
   },
 ];
 
+// Mock wallet address for testing
+const MOCK_WALLET_ADDRESS = "tb1pv68ul79qt23mj8dlh2a9y4gwxpa50e2w63yxwxf99s0f6egk2cvqx0jdle";
+
+// Mock positions for the test wallet
+const MOCK_POSITIONS: MarketPosition[] = [
+  {
+    marketId: "1", // Bitcoin $150k market
+    yesTokens: 500000, // 500k YES tokens
+    noTokens: 200000, // 200k NO tokens
+    avgYesCost: 60, // Bought YES at 60%
+    avgNoCost: 40, // Bought NO at 40%
+  },
+  {
+    marketId: "2", // Ethereum flip market
+    yesTokens: 100000, // 100k YES tokens
+    noTokens: 800000, // 800k NO tokens (betting against flip)
+    avgYesCost: 25, // Bought YES at 25%
+    avgNoCost: 75, // Bought NO at 75%
+  },
+  {
+    marketId: "3", // Bitcoin ETF Europe market
+    yesTokens: 300000, // 300k YES tokens
+    noTokens: 300000, // 300k NO tokens (neutral position)
+    avgYesCost: 50, // Bought YES at 50%
+    avgNoCost: 50, // Bought NO at 50%
+  },
+];
+
 export default function HomePage() {
   const { markets, setMarkets, filter, setFilter } = useMarketsStore();
   const { wallet } = useWalletStore();
+  const { positions, setPositions } = usePortfolioStore();
   const filteredMarkets = useFilteredMarkets();
 
   // Load demo markets on mount
@@ -97,6 +127,14 @@ export default function HomePage() {
       setMarkets(DEMO_MARKETS);
     }
   }, [markets.length, setMarkets]);
+
+  // Load mock positions for the test wallet address
+  useEffect(() => {
+    if (wallet?.address === MOCK_WALLET_ADDRESS && positions.length === 0) {
+      console.log("Loading mock positions for test wallet:", MOCK_WALLET_ADDRESS);
+      setPositions(MOCK_POSITIONS);
+    }
+  }, [wallet?.address, positions.length, setPositions]);
 
   const stats = {
     totalVolume: markets.reduce((sum, m) => sum + m.volume, 0),
@@ -165,7 +203,7 @@ export default function HomePage() {
       {/* Filters */}
       <section className="flex items-center justify-between">
         <div className="flex gap-2">
-          {(["all", "active", "resolved", "my"] as const).map((f) => (
+          {(["all", "active", "resolved"] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -197,9 +235,7 @@ export default function HomePage() {
             <div className="text-6xl mb-4">🔮</div>
             <h3 className="text-xl font-semibold mb-2">No markets found</h3>
             <p className="text-zinc-500 mb-6">
-              {filter === "my"
-                ? "You haven't created any markets yet"
-                : "Be the first to create a prediction market!"}
+              Be the first to create a prediction market!
             </p>
             <Link href="/create">
               <Button variant="primary">
