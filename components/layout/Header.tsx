@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import {
@@ -35,8 +36,15 @@ export function Header() {
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-linear-to-br from-accent to-bitcoin-gold flex items-center justify-center">
-              <span className="text-black font-bold text-lg">E</span>
+            <div className="relative w-8 h-8 flex items-center justify-center">
+              <Image
+                src="/logo-echomarkets-gradient.svg"
+                alt="Echo Markets"
+                width={32}
+                height={32}
+                className="w-full h-full"
+                priority
+              />
             </div>
             <span className="font-bold text-xl hidden sm:block">
               Echo<span className="text-accent">Markets</span>
