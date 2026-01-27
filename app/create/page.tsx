@@ -201,7 +201,7 @@ export default function CreateMarketPage() {
                 type="text"
                 value={formData.question}
                 onChange={(e) => updateForm({ question: e.target.value })}
-                placeholder="Will Bitcoin reach $150,000 by end of 2025?"
+                placeholder="Will Bitcoin reach $150,000 by end of 2026?"
                 className="input"
               />
               <p className="text-xs text-zinc-500 mt-1">
