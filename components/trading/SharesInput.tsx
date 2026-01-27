@@ -77,7 +77,7 @@ export function SharesInput({
       {/* Input Container */}
       <div
         className={`
-        relative flex items-center bg-surface-2 rounded-xl border transition-colors
+        relative flex items-center bg-surface-2 rounded-xl border transition-colors overflow-hidden
         ${disabled ? "opacity-50" : ""}
         ${
           exceedsMax
@@ -87,7 +87,7 @@ export function SharesInput({
       `}
       >
         {/* Icon */}
-        <div className="pl-4">
+        <div className="pl-4 flex-shrink-0">
           <Coins className="w-5 h-5 text-zinc-500" />
         </div>
 
@@ -101,27 +101,30 @@ export function SharesInput({
           placeholder={placeholder}
           disabled={disabled}
           className="
-            flex-1 bg-transparent px-3 py-4 text-lg font-medium text-white
+            flex-1 min-w-0 bg-transparent px-3 py-4 text-lg font-medium text-white
             placeholder-zinc-600 focus:outline-none
           "
         />
 
-        {/* Suffix */}
-        <div className="pr-2 text-sm text-zinc-500">sats</div>
+        {/* Suffix and Max Button Container */}
+        <div className="flex items-center gap-2 pr-4 flex-shrink-0">
+          {/* Suffix */}
+          <span className="text-sm text-zinc-500 whitespace-nowrap">sats</span>
 
-        {/* Max Button */}
-        <button
-          onClick={handleMax}
-          disabled={disabled || maxAmount === 0}
-          className="
-            mr-2 px-3 py-1.5 text-xs font-semibold rounded-lg
-            bg-accent/20 text-accent hover:bg-accent/30
-            disabled:opacity-50 disabled:cursor-not-allowed
-            transition-colors
-          "
-        >
-          MAX
-        </button>
+          {/* Max Button */}
+          <button
+            onClick={handleMax}
+            disabled={disabled || maxAmount === 0}
+            className="
+              px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap
+              bg-accent/20 text-accent hover:bg-accent/30
+              disabled:opacity-50 disabled:cursor-not-allowed
+              transition-colors
+            "
+          >
+            MAX
+          </button>
+        </div>
       </div>
 
       {/* Preset Buttons */}
