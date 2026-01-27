@@ -1,6 +1,6 @@
 "use client";
 
-// import { useEffect } from "react";
+import { useEffect } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -18,11 +18,153 @@ import {
 } from "@/lib/store";
 import { Button } from "@/components/ui/Button";
 import { formatSats, formatAddress } from "@/lib/utils";
+import type { Market, MarketPosition } from "@/types";
+
+// Mock wallet address for testing
+const MOCK_WALLET_ADDRESS = "tb1pv68ul79qt23mj8dlh2a9y4gwxpa50e2w63yxwxf99s0f6egk2cvqx0jdle";
+
+// Mock positions for the test wallet
+const MOCK_POSITIONS: MarketPosition[] = [
+  {
+    marketId: "1", // Bitcoin $150k market
+    yesTokens: 500000, // 500k YES tokens
+    noTokens: 200000, // 200k NO tokens
+    avgYesCost: 60, // Bought YES at 60%
+    avgNoCost: 40, // Bought NO at 40%
+  },
+  {
+    marketId: "2", // Ethereum flip market
+    yesTokens: 100000, // 100k YES tokens
+    noTokens: 800000, // 800k NO tokens (betting against flip)
+    avgYesCost: 25, // Bought YES at 25%
+    avgNoCost: 75, // Bought NO at 75%
+  },
+  {
+    marketId: "3", // Bitcoin ETF Europe market
+    yesTokens: 300000, // 300k YES tokens
+    noTokens: 300000, // 300k NO tokens (neutral position)
+    avgYesCost: 50, // Bought YES at 50%
+    avgNoCost: 50, // Bought NO at 50%
+  },
+];
+
+// Demo markets (same as in page.tsx)
+const DEMO_MARKETS: Market[] = [
+  {
+    id: "1",
+    questionHash: "abc123",
+    question: "Will Bitcoin reach $150,000 by end of 2026?",
+    description: "BTC/USD price on major exchanges must exceed $150,000",
+    params: {
+      tradingDeadline: Math.floor(Date.now() / 1000) + 86400 * 30,
+      resolutionDeadline: Math.floor(Date.now() / 1000) + 86400 * 35,
+      feeBps: 100,
+      minBet: 10000,
+    },
+    status: "Active" as const,
+    yesSupply: 5000000,
+    noSupply: 3000000,
+    maxSupply: 1000000000000,
+    fees: 80000,
+    creator: "02abcd...",
+    createdAt: Math.floor(Date.now() / 1000) - 86400 * 5,
+    yesPrice: 62,
+    noPrice: 38,
+    volume: 8000000,
+    liquidity: 8000000,
+  },
+  {
+    id: "2",
+    questionHash: "def456",
+    question: "Will Ethereum flip Bitcoin market cap in 2026?",
+    description: "ETH market cap must exceed BTC market cap",
+    params: {
+      tradingDeadline: Math.floor(Date.now() / 1000) + 86400 * 60,
+      resolutionDeadline: Math.floor(Date.now() / 1000) + 86400 * 65,
+      feeBps: 100,
+      minBet: 10000,
+    },
+    status: "Active" as const,
+    yesSupply: 2000000,
+    noSupply: 8000000,
+    maxSupply: 1000000000000,
+    fees: 100000,
+    creator: "02efgh...",
+    createdAt: Math.floor(Date.now() / 1000) - 86400 * 10,
+    yesPrice: 20,
+    noPrice: 80,
+    volume: 10000000,
+    liquidity: 10000000,
+  },
+  {
+    id: "3",
+    questionHash: "ghi789",
+    question: "Will there be a Bitcoin ETF approved in Europe by Q2 2026?",
+    params: {
+      tradingDeadline: Math.floor(Date.now() / 1000) + 86400 * 45,
+      resolutionDeadline: Math.floor(Date.now() / 1000) + 86400 * 50,
+      feeBps: 100,
+      minBet: 10000,
+    },
+    status: "Active" as const,
+    yesSupply: 4000000,
+    noSupply: 4000000,
+    maxSupply: 1000000000000,
+    fees: 80000,
+    creator: "02ijkl...",
+    createdAt: Math.floor(Date.now() / 1000) - 86400 * 3,
+    yesPrice: 50,
+    noPrice: 50,
+    volume: 8000000,
+    liquidity: 8000000,
+  },
+];
 
 export default function PortfolioPage() {
   const { wallet } = useWalletStore();
-  const { positions, transactions } = usePortfolioStore();
-  const { markets } = useMarketsStore();
+  const { positions, transactions, setPositions } = usePortfolioStore();
+  const { markets, setMarkets } = useMarketsStore();
+
+  // Load demo markets if not already loaded
+  useEffect(() => {
+    if (markets.length === 0) {
+      setMarkets(DEMO_MARKETS);
+    }
+  }, [markets.length, setMarkets]);
+
+  // Load mock positions for the test wallet address
+  useEffect(() => {
+    if (wallet?.address === MOCK_WALLET_ADDRESS) {
+      // Check if mock positions are already loaded
+      const hasAllMockPositions = MOCK_POSITIONS.every((mockPos) =>
+        positions.some(
+          (pos) =>
+            pos.marketId === mockPos.marketId &&
+            pos.yesTokens === mockPos.yesTokens &&
+            pos.noTokens === mockPos.noTokens
+        )
+      );
+      
+      if (!hasAllMockPositions) {
+        console.log("Loading mock positions for test wallet:", MOCK_WALLET_ADDRESS);
+        console.log("Current positions:", positions);
+        // Merge with existing positions, updating mock ones
+        const updatedPositions = [...positions];
+        MOCK_POSITIONS.forEach((mockPos) => {
+          const existingIndex = updatedPositions.findIndex(
+            (p) => p.marketId === mockPos.marketId
+          );
+          if (existingIndex >= 0) {
+            updatedPositions[existingIndex] = mockPos;
+          } else {
+            updatedPositions.push(mockPos);
+          }
+        });
+        console.log("Setting positions:", updatedPositions);
+        setPositions(updatedPositions);
+      }
+    }
+  }, [wallet?.address, positions, setPositions]);
 
   if (!wallet) {
     return (
